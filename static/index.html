@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CosyVoice3 TTS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+    <style>
+        /* WaveSurfer 区域选择样式 */
+        [part="region"] { border-radius: 2px; }
+        [part="region-handle"] { width: 4px !important; background: #374151 !important; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+<!-- 顶部导航 -->
+<nav class="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6">
+        <div class="flex items-center justify-between py-3">
+            <div class="flex items-center gap-3">
+                <span class="text-sm font-semibold text-gray-800">CosyVoice3 TTS</span>
+                <span class="px-1.5 py-0.5 bg-gray-50 border border-gray-100 text-gray-400 text-xs rounded">v3</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="gpu-badge" class="flex items-center gap-1.5 px-2 py-1 bg-gray-50 border border-gray-100 rounded text-xs text-gray-500">
+                    <i id="gpu-dot" class="fas fa-circle text-gray-300" style="font-size:6px"></i>
+                    <span id="gpu-text">加载中...</span>
+                </span>
+                <button onclick="window.open('/docs','_blank')" class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded transition" title="API 文档">
+                    <i class="fas fa-book text-xs"></i>
+                </button>
+                <button onclick="offloadGPU()" class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded transition" title="释放显存">
+                    <i class="fas fa-memory text-xs"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<main class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- Step 0: 音频预处理 -->
+    <div>
+        <div class="flex items-center gap-2 mb-3">
+            <span class="w-5 h-5 rounded-full bg-gray-400 text-white text-xs flex items-center justify-center font-medium flex-shrink-0">0</span>
+            <h2 class="text-sm font-medium text-gray-700">音频预处理 <span class="text-gray-400 font-normal">（可选）</span></h2>
+            <span class="text-xs text-gray-400">裁剪片段、去除背景音乐，处理后直接送入第 1 步</span>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+
+            <!-- 上传原始音频 -->
+            <div>
+                <label class="block text-xs text-gray-500 mb-1.5">原始音频</label>
+                <div id="raw-upload-area" class="border-2 border-dashed border-gray-200 rounded-md p-5 text-center cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition">
+                    <input type="file" id="raw-file" accept="audio/*" class="hidden">
+                    <i class="fas fa-cloud-upload-alt text-gray-300 text-xl mb-1.5"></i>
+                    <p class="text-sm text-gray-400">点击或拖拽上传音频</p>
+                    <p id="raw-file-name" class="text-xs text-gray-600 mt-1 font-medium"></p>
+                </div>
+            </div>
+
+            <!-- 波形预览 + 裁剪 -->
+            <div id="raw-preview" class="hidden space-y-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-gray-500">波形预览 <span id="raw-duration" class="text-gray-400"></span></label>
+                    <div class="flex items-center gap-2">
+                        <button onclick="waveSurfer.playPause()" class="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-50 border border-gray-200 rounded transition">
+                            <i class="fas fa-play text-xs" id="play-icon"></i>
+                        </button>
+                        <button onclick="clearRegion()" class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-50 border border-gray-200 rounded transition" title="清除选区">
+                            <i class="fas fa-times text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- WaveSurfer 容器 -->
+                <div id="waveform" class="border border-gray-200 rounded-md overflow-hidden bg-gray-50" style="height:80px"></div>
+
+                <!-- 选区时间 + 操作 -->
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500">
+                        <i class="fas fa-crop-alt text-gray-400"></i>
+                        <span>选区：</span>
+                        <input type="number" id="trim-start" value="0" min="0" step="0.01"
+                            class="w-18 px-2 py-1 border border-gray-200 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-gray-400"
+                            onchange="updateRegionFromInputs()">
+                        <span class="text-gray-300">—</span>
+                        <input type="number" id="trim-end" value="0" min="0" step="0.01"
+                            class="w-18 px-2 py-1 border border-gray-200 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-gray-400"
+                            onchange="updateRegionFromInputs()">
+                        <span class="text-gray-400">秒</span>
+                    </div>
+                    <button onclick="addSegment()" id="trim-btn"
+                        class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white text-xs rounded-md transition ml-auto">
+                        <i class="fas fa-plus mr-1"></i>添加片段
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400">拖拽波形创建选区 → 点击「添加片段」→ 可添加多段 → 拼接后用于创建音色</p>
+
+                <!-- 片段列表 -->
+                <div id="segments-list" class="hidden space-y-1">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-gray-500">已选片段 <span id="segments-total" class="text-gray-400"></span></span>
+                        <div class="flex gap-2">
+                            <button onclick="clearSegments()" class="text-xs text-gray-400 hover:text-red-500 transition">清空</button>
+                            <button onclick="mergeSegments()" id="merge-btn"
+                                class="px-2.5 py-1 bg-gray-800 hover:bg-gray-900 text-white text-xs rounded-md transition">
+                                <i class="fas fa-layer-group mr-1"></i>拼接片段
+                            </button>
+                        </div>
+                    </div>
+                    <div id="segments-items" class="space-y-1"></div>
+                </div>
+            </div>
+
+            <!-- 人声分离 -->
+            <div id="separate-section" class="hidden">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-500">人声分离</p>
+                        <p class="text-xs text-gray-400 mt-0.5">使用 Demucs 去除背景音乐，提取纯人声（耗时约 1~3 分钟）</p>
+                    </div>
+                    <button onclick="doSeparate()" id="separate-btn"
+                        class="px-3 py-1.5 border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs rounded-md transition flex-shrink-0">
+                        <i class="fas fa-magic mr-1"></i><span id="separate-btn-text">提取人声</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 处理后预览 -->
+            <div id="processed-preview" class="hidden">
+                <label class="block text-xs text-gray-500 mb-1.5">处理结果预览</label>
+                <audio id="processed-audio" controls class="w-full h-10 mb-3"></audio>
+                <button onclick="useProcessed()"
+                    class="w-full py-2 bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium rounded-md transition flex items-center justify-center gap-2">
+                    <i class="fas fa-arrow-down"></i>
+                    使用此音频 → 进入第 1 步创建音色
+                </button>
+            </div>
+
+            <!-- 操作状态 -->
+            <div id="process-status" class="hidden text-xs text-gray-500 flex items-center gap-2">
+                <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                <span id="process-status-text">处理中...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 1: 创建音色 -->
+    <div>
+        <div class="flex items-center gap-2 mb-3">
+            <span class="w-5 h-5 rounded-full bg-gray-800 text-white text-xs flex items-center justify-center font-medium flex-shrink-0">1</span>
+            <h2 class="text-sm font-medium text-gray-700">创建音色</h2>
+            <span class="text-xs text-gray-400">上传参考音频（3~30 秒），提取声音特征保存为可复用音色</span>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+            <div>
+                <label class="block text-xs text-gray-500 mb-1.5">参考音频 <span class="text-gray-400">（WAV / MP3）</span></label>
+                <div id="upload-area" class="border-2 border-dashed border-gray-200 rounded-md p-5 text-center cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition">
+                    <input type="file" id="prompt-file" accept="audio/*" class="hidden">
+                    <i class="fas fa-cloud-upload-alt text-gray-300 text-xl mb-1.5"></i>
+                    <p class="text-sm text-gray-400">点击或拖拽上传音频文件</p>
+                    <p id="file-name" class="text-xs text-gray-600 mt-1 font-medium"></p>
+                </div>
+            </div>
+            <!-- 参考音频预览 -->
+            <div id="prompt-preview" class="hidden">
+                <label class="block text-xs text-gray-500 mb-1.5">预览 <span id="prompt-duration" class="text-gray-400"></span></label>
+                <audio id="prompt-audio" controls class="w-full h-10"></audio>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5">音色名称 <span class="text-red-400">*</span></label>
+                    <input type="text" id="voice-name" placeholder="如：小明的声音"
+                        class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-gray-400">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5">参考文本 <span class="text-red-400">*</span></label>
+                    <input type="text" id="prompt-text" placeholder="音频对应的文字内容"
+                        class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-gray-400">
+                </div>
+            </div>
+            <button id="create-btn" onclick="createVoice()"
+                class="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium py-2 rounded-md transition">
+                <i class="fas fa-microphone mr-1.5"></i><span id="create-btn-text">提取并保存音色</span>
+            </button>
+            <div id="create-result" class="hidden px-3 py-2.5 rounded-md text-sm"></div>
+        </div>
+    </div>
+
+    <!-- Step 2: 生成语音 -->
+    <div>
+        <div class="flex items-center gap-2 mb-3">
+            <span class="w-5 h-5 rounded-full bg-gray-800 text-white text-xs flex items-center justify-center font-medium flex-shrink-0">2</span>
+            <h2 class="text-sm font-medium text-gray-700">生成语音</h2>
+            <span class="text-xs text-gray-400">选择音色，输入文本，生成语音</span>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+            <div>
+                <label class="block text-xs text-gray-500 mb-1.5">音色</label>
+                <div class="flex gap-2">
+                    <select id="voice-select"
+                        class="flex-1 px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-gray-400">
+                        <option value="">-- 请先在第 1 步创建音色 --</option>
+                    </select>
+                    <button onclick="refreshVoices()" title="刷新"
+                        class="px-2.5 py-2 border border-gray-200 rounded-md text-gray-500 hover:bg-gray-50 transition">
+                        <i class="fas fa-sync-alt text-xs"></i>
+                    </button>
+                    <button onclick="deleteSelectedVoice()" title="删除音色"
+                        class="px-2.5 py-2 border border-gray-200 rounded-md text-gray-400 hover:text-red-500 hover:border-red-200 transition">
+                        <i class="fas fa-trash text-xs"></i>
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs text-gray-500 mb-1.5">合成模式</label>
+                <div class="flex gap-1 bg-gray-50 border border-gray-200 rounded-md p-1">
+                    <button class="tab flex-1 px-3 py-1.5 text-xs rounded transition font-medium bg-white text-gray-800 border border-gray-200" data-mode="zero_shot">零样本克隆</button>
+                    <button class="tab flex-1 px-3 py-1.5 text-xs rounded transition text-gray-500 hover:text-gray-700" data-mode="cross_lingual">跨语种</button>
+                    <button class="tab flex-1 px-3 py-1.5 text-xs rounded transition text-gray-500 hover:text-gray-700" data-mode="instruct">指令控制</button>
+                </div>
+                <p id="mode-desc" class="text-xs text-gray-400 mt-1.5">使用保存的音色，将文本合成为相同声线的语音</p>
+            </div>
+            <div id="instruct-group" class="hidden">
+                <label class="block text-xs text-gray-500 mb-1.5">指令文本</label>
+                <input type="text" id="instruct-text" placeholder="例：用四川话说、带开心的情绪"
+                    class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-gray-400">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-500 mb-1.5">文本内容</label>
+                <textarea id="text" rows="3" placeholder="请输入要合成的文本..."
+                    class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm resize-none focus:outline-none focus:ring-1 focus:ring-gray-400">收到好友从远方寄来的生日礼物，那份意外的惊喜与深深的祝福让我心中充满了甜蜜的快乐。</textarea>
+            </div>
+            <div class="flex items-center gap-4 flex-wrap">
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-500">语速</label>
+                    <input type="number" id="speed" value="1.0" min="0.5" max="2.0" step="0.1"
+                        class="w-16 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-center focus:outline-none focus:ring-1 focus:ring-gray-400">
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-500">Seed</label>
+                    <input type="number" id="seed" placeholder="随机" min="0" max="2147483647" step="1"
+                        class="w-28 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-center focus:outline-none focus:ring-1 focus:ring-gray-400">
+                </div>
+                <input type="hidden" id="stream-mode" value="1">
+            </div>
+        </div>
+    </div>
+
+    <!-- 生成按钮 -->
+    <button id="generate-btn" onclick="generate()"
+        class="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium py-2.5 rounded-md transition">
+        <i class="fas fa-play mr-1.5"></i><span id="btn-text">生成语音</span>
+    </button>
+
+    <!-- 结果区 -->
+    <div id="result-area" class="hidden bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+        <div>
+            <div class="flex items-center justify-between mb-1.5">
+                <span id="progress-status" class="text-xs text-gray-500">正在生成...</span>
+                <span id="progress-pct" class="text-xs text-gray-400">0%</span>
+            </div>
+            <div class="h-1 bg-gray-100 rounded-full overflow-hidden">
+                <div id="progress" class="h-full bg-gray-700 transition-all duration-300" style="width:0%"></div>
+            </div>
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+            <div id="stat-ttfb" class="text-center p-2.5 bg-gray-50 border border-gray-100 rounded-md">
+                <p class="text-xs text-gray-400 mb-1">首字节</p>
+                <p id="ttfb-value" class="text-sm font-semibold text-gray-700 font-mono">--</p>
+            </div>
+            <div id="stat-start" class="text-center p-2.5 bg-gray-50 border border-gray-100 rounded-md">
+                <p class="text-xs text-gray-400 mb-1">开始播放</p>
+                <p id="start-value" class="text-sm font-semibold text-gray-700 font-mono">--</p>
+            </div>
+            <div id="stat-total" class="text-center p-2.5 bg-gray-50 border border-gray-100 rounded-md">
+                <p class="text-xs text-gray-400 mb-1">总时间</p>
+                <p id="total-value" class="text-sm font-semibold text-gray-700 font-mono">--</p>
+            </div>
+            <div id="stat-size" class="text-center p-2.5 bg-gray-50 border border-gray-100 rounded-md">
+                <p class="text-xs text-gray-400 mb-1">大小</p>
+                <p id="size-value" class="text-sm font-semibold text-gray-700 font-mono">--</p>
+            </div>
+        </div>
+        <div id="audio-wrap" class="hidden">
+            <audio id="audio-output" controls class="w-full h-10"></audio>
+            <div id="seed-display" class="hidden flex items-center gap-2 text-xs text-gray-400">
+                <span>本次 seed：</span>
+                <span id="seed-value" class="font-mono text-gray-600"></span>
+                <button onclick="copySeedToInput()" class="px-1.5 py-0.5 border border-gray-200 rounded hover:bg-gray-50 transition" title="复制到输入框">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+            <div class="mt-2 flex gap-2">
+                <button id="download-btn"
+                    class="flex-1 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm py-2 rounded-md transition">
+                    <i class="fas fa-download mr-1.5"></i>下载原始音频
+                </button>
+                <button id="normalize-btn" onclick="downloadNormalized()"
+                    class="flex-1 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm py-2 rounded-md transition" title="归一化到 -16 LUFS（视频配音标准）">
+                    <i class="fas fa-sliders-h mr-1.5"></i>归一化下载 <span class="text-xs text-gray-400">-16 LUFS</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-5 right-5 bg-white border border-gray-200 shadow rounded-lg px-4 py-3 hidden z-50">
+    <div class="flex items-center gap-2">
+        <i id="toast-icon" class="fas fa-check-circle text-green-500 text-sm"></i>
+        <span id="toast-message" class="text-sm text-gray-700"></span>
+    </div>
+</div>
+
+<script src="/static/app.js?v=3"></script>
+</body>
+</html>
