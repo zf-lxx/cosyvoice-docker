@@ -47,16 +47,12 @@ COPY app.py mcp_server.py model.py ./
 # Set Python path
 ENV PYTHONPATH=/app:/app/third_party/Matcha-TTS
 
-# Download models - Fun-CosyVoice3-0.5B from HuggingFace (faster)
-ARG MODEL_NAME=Fun-CosyVoice3-0.5B
-RUN pip install --no-cache-dir huggingface_hub && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512', local_dir='pretrained_models/${MODEL_NAME}')"
-
 # Create data directories
-RUN mkdir -p /data/input /data/output
+RUN mkdir -p /data/input /data/output /app/pretrained_models
 
 # Environment variables
-ENV MODEL_DIR=pretrained_models/${MODEL_NAME}
+# Mount model at runtime: -v /your/local/model:/app/pretrained_models/Fun-CosyVoice3-0.5B
+ENV MODEL_DIR=pretrained_models/Fun-CosyVoice3-0.5B
 ENV INPUT_DIR=/data/input
 ENV OUTPUT_DIR=/data/output
 ENV PORT=8188
