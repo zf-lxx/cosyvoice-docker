@@ -168,7 +168,7 @@ class CosyVoiceFrontEnd:
             # 检查缓存 - 使用 prompt_wav 路径作为 key
             cache_key = f"{prompt_wav}:{prompt_text}" if isinstance(prompt_wav, str) else None
             cached = self.prompt_cache.get(cache_key) if cache_key else None
-            
+
             if cached:
                 # 使用缓存的 embedding
                 model_input = {
@@ -194,7 +194,7 @@ class CosyVoiceFrontEnd:
                     speech_feat, speech_feat_len[:] = speech_feat[:, :2 * token_len], 2 * token_len
                     speech_token, speech_token_len[:] = speech_token[:, :token_len], token_len
                 embedding = self._extract_spk_embedding(prompt_wav)
-                
+
                 # 缓存到 GPU 内存
                 if cache_key:
                     self.prompt_cache[cache_key] = {
@@ -206,7 +206,7 @@ class CosyVoiceFrontEnd:
                         'speech_token_len': speech_token_len,
                         'embedding': embedding
                     }
-                
+
                 model_input = {'prompt_text': prompt_text_token, 'prompt_text_len': prompt_text_token_len,
                                'llm_prompt_speech_token': speech_token, 'llm_prompt_speech_token_len': speech_token_len,
                                'flow_prompt_speech_token': speech_token, 'flow_prompt_speech_token_len': speech_token_len,

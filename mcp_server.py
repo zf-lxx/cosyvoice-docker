@@ -28,20 +28,20 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # GPU Manager (shared singleton)
 class GPUManager:
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._init()
         return cls._instance
-    
+
     def _init(self):
         self.model = None
         self.model_dir = None
         self.lock = threading.Lock()
         self.last_used = time.time()
         self.idle_timeout = int(os.getenv("GPU_IDLE_TIMEOUT", "600"))
-        
+
     def get_model(self, model_dir: str = None):
         with self.lock:
             if model_dir is None:
@@ -50,14 +50,14 @@ class GPUManager:
                 self._load_model(model_dir)
             self.last_used = time.time()
             return self.model
-    
+
     def _load_model(self, model_dir: str):
         if self.model is not None:
             self.offload()
         print(f"[MCP] Loading model from {model_dir}...")
         self.model = AutoModel(model_dir=model_dir)
         self.model_dir = model_dir
-    
+
     def offload(self):
         if self.model:
             del self.model
@@ -67,7 +67,7 @@ class GPUManager:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             print("[MCP] GPU memory released")
-    
+
     def status(self) -> dict:
         gpu_info = {"available": torch.cuda.is_available()}
         if torch.cuda.is_available():
@@ -98,31 +98,31 @@ def tts_zero_shot(
 ) -> dict:
     """
     Zero-shot voice cloning TTS.
-    
+
     Args:
         text: Text to synthesize
         prompt_text: Text content of the prompt audio (must match audio)
         prompt_audio_path: Path to reference audio file (3-30 seconds)
         speed: Speech speed (0.5-2.0, default 1.0)
         output_filename: Optional output filename (auto-generated if not provided)
-    
+
     Returns:
         dict with status, output_path, duration_seconds
     """
     try:
         model = gpu_manager.get_model()
-        
+
         speeches = []
         for chunk in model.inference_zero_shot(text, prompt_text, prompt_audio_path, stream=False, speed=speed):
             speeches.append(chunk['tts_speech'])
-        
+
         full_speech = torch.cat(speeches, dim=1)
         filename = output_filename or f"tts_{uuid.uuid4().hex}.wav"
         output_path = OUTPUT_DIR / filename
         torchaudio.save(str(output_path), full_speech, model.sample_rate)
-        
+
         duration = full_speech.shape[1] / model.sample_rate
-        
+
         return {
             "status": "success",
             "output_path": str(output_path),
@@ -141,28 +141,28 @@ def tts_cross_lingual(
 ) -> dict:
     """
     Cross-lingual voice cloning TTS.
-    
+
     Args:
         text: Text to synthesize (can be different language from prompt)
         prompt_audio_path: Path to reference audio file
         speed: Speech speed (0.5-2.0)
         output_filename: Optional output filename
-    
+
     Returns:
         dict with status, output_path, duration_seconds
     """
     try:
         model = gpu_manager.get_model()
-        
+
         speeches = []
         for chunk in model.inference_cross_lingual(text, prompt_audio_path, stream=False, speed=speed):
             speeches.append(chunk['tts_speech'])
-        
+
         full_speech = torch.cat(speeches, dim=1)
         filename = output_filename or f"tts_{uuid.uuid4().hex}.wav"
         output_path = OUTPUT_DIR / filename
         torchaudio.save(str(output_path), full_speech, model.sample_rate)
-        
+
         return {
             "status": "success",
             "output_path": str(output_path),
@@ -181,34 +181,34 @@ def tts_instruct(
 ) -> dict:
     """
     Instruction-controlled TTS with voice cloning.
-    
+
     Args:
         text: Text to synthesize
         instruct_text: Instruction for style control (e.g., "用四川话说", "speak slowly")
         prompt_audio_path: Path to reference audio file
         speed: Speech speed (0.5-2.0)
         output_filename: Optional output filename
-    
+
     Returns:
         dict with status, output_path, duration_seconds
     """
     try:
         model = gpu_manager.get_model()
-        
+
         speeches = []
         if hasattr(model, 'inference_instruct2'):
             output = model.inference_instruct2(text, instruct_text, prompt_audio_path, stream=False, speed=speed)
         else:
             output = model.inference_instruct(text, "", instruct_text, stream=False, speed=speed)
-        
+
         for chunk in output:
             speeches.append(chunk['tts_speech'])
-        
+
         full_speech = torch.cat(speeches, dim=1)
         filename = output_filename or f"tts_{uuid.uuid4().hex}.wav"
         output_path = OUTPUT_DIR / filename
         torchaudio.save(str(output_path), full_speech, model.sample_rate)
-        
+
         return {
             "status": "success",
             "output_path": str(output_path),
@@ -226,28 +226,28 @@ def tts_sft(
 ) -> dict:
     """
     TTS using pretrained speaker voice.
-    
+
     Args:
         text: Text to synthesize
         speaker_id: Speaker ID (use list_speakers to get available IDs)
         speed: Speech speed (0.5-2.0)
         output_filename: Optional output filename
-    
+
     Returns:
         dict with status, output_path, duration_seconds
     """
     try:
         model = gpu_manager.get_model()
-        
+
         speeches = []
         for chunk in model.inference_sft(text, speaker_id, stream=False, speed=speed):
             speeches.append(chunk['tts_speech'])
-        
+
         full_speech = torch.cat(speeches, dim=1)
         filename = output_filename or f"tts_{uuid.uuid4().hex}.wav"
         output_path = OUTPUT_DIR / filename
         torchaudio.save(str(output_path), full_speech, model.sample_rate)
-        
+
         return {
             "status": "success",
             "output_path": str(output_path),
@@ -260,7 +260,7 @@ def tts_sft(
 def list_speakers() -> dict:
     """
     List available pretrained speaker voices.
-    
+
     Returns:
         dict with speakers list
     """
@@ -274,7 +274,7 @@ def list_speakers() -> dict:
 def gpu_status() -> dict:
     """
     Get current GPU and model status.
-    
+
     Returns:
         dict with model_loaded, model_dir, gpu info, idle_seconds
     """
@@ -284,7 +284,7 @@ def gpu_status() -> dict:
 def gpu_offload() -> dict:
     """
     Release GPU memory by unloading the model.
-    
+
     Returns:
         dict with status message
     """
@@ -295,10 +295,10 @@ def gpu_offload() -> dict:
 def load_model(model_dir: str) -> dict:
     """
     Load a specific model.
-    
+
     Args:
         model_dir: Path to model directory (e.g., "pretrained_models/CosyVoice2-0.5B")
-    
+
     Returns:
         dict with status and loaded model info
     """
