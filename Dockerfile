@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com
 
 # Install additional dependencies
-RUN pip install --no-cache-dir fastmcp funasr "ruamel.yaml<0.18" \
+RUN pip install --no-cache-dir fastmcp funasr demucs "ruamel.yaml<0.18" \
     -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com
 
 # Copy application code (including third_party with Matcha-TTS)
