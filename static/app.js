@@ -65,17 +65,28 @@ async function loadRawFile(file) {
     rawFile = file;
     processedBlob = null;
     activeRegion = null;
+    segments = [];
     document.getElementById('raw-file-name').textContent = file.name;
     document.getElementById('processed-preview').classList.add('hidden');
-    document.getElementById('raw-preview').classList.remove('hidden');
     document.getElementById('separate-section').classList.remove('hidden');
+    document.getElementById('separate-compare').classList.add('hidden');
+    loadWaveform(file, '原始音频');
+}
 
-    const url = URL.createObjectURL(file);
+function loadWaveform(fileOrBlob, sourceLabel) {
+    const url = fileOrBlob instanceof Blob && !(fileOrBlob instanceof File)
+        ? URL.createObjectURL(fileOrBlob)
+        : URL.createObjectURL(fileOrBlob);
+
+    document.getElementById('trim-source-hint').textContent = sourceLabel;
+    document.getElementById('raw-preview').classList.remove('hidden');
+    document.getElementById('processed-preview').classList.add('hidden');
+    segments = [];
+    renderSegments();
 
     // 销毁旧实例
     if (waveSurfer) { waveSurfer.destroy(); waveSurfer = null; }
 
-    // 初始化 WaveSurfer
     wsRegions = WaveSurfer.Regions.create();
     waveSurfer = WaveSurfer.create({
         container: '#waveform',
@@ -87,29 +98,22 @@ async function loadRawFile(file) {
         normalize: true,
         plugins: [wsRegions],
     });
-
     waveSurfer.load(url);
-
     waveSurfer.on('ready', () => {
         const d = waveSurfer.getDuration();
         document.getElementById('raw-duration').textContent = `（${d.toFixed(1)} 秒）`;
         document.getElementById('trim-start').value = '0';
         document.getElementById('trim-end').value = d.toFixed(2);
-        // 创建默认全选区
         createRegion(0, d);
     });
-
     waveSurfer.on('play', () => {
         document.getElementById('play-icon').className = 'fas fa-pause text-xs';
     });
     waveSurfer.on('pause', () => {
         document.getElementById('play-icon').className = 'fas fa-play text-xs';
     });
-
-    // 拖拽创建选区
     wsRegions.enableDragSelection({ color: 'rgba(55,65,81,0.15)' });
     wsRegions.on('region-created', region => {
-        // 只保留一个选区
         wsRegions.getRegions().forEach(r => { if (r.id !== region.id) r.remove(); });
         activeRegion = region;
         updateInputsFromRegion(region);
@@ -226,7 +230,7 @@ async function mergeSegments() {
         audioCtx.close();
 
         processedBlob = audioBufferToWavBlob(merged);
-        showProcessedPreview(processedBlob, '拼接完成');
+        showProcessedPreview(processedBlob);
         const total = segments.reduce((a, s) => a + s.duration, 0);
         showToast(`拼接完成，共 ${total.toFixed(1)} 秒`, 'success');
     } catch (e) {
@@ -269,7 +273,7 @@ async function doTrim() {
         audioCtx.close();
 
         processedBlob = audioBufferToWavBlob(trimmed);
-        showProcessedPreview(processedBlob, '裁剪完成');
+        showProcessedPreview(processedBlob);
         showToast(`裁剪完成（${(length / sampleRate).toFixed(1)} 秒）`, 'success');
     } catch (e) {
         showToast('裁剪失败：' + e.message, 'error');
@@ -317,6 +321,8 @@ function createWavHeader(numSamples, sampleRate, numChannels) {
 }
 
 // ── Step 0: 人声分离 ─────────────────────────────────
+let separatedBlob = null; // 人声分离结果（独立存储，不污染 processedBlob）
+
 async function doSeparate() {
     if (!rawFile) return showToast('请先上传音频', 'info');
 
@@ -327,30 +333,50 @@ async function doSeparate() {
     showProcessStatus('正在提取人声，约需 1~3 分钟...');
 
     try {
-        const sourceFile = processedBlob
-            ? new File([processedBlob], 'processed.wav', { type: 'audio/wav' })
-            : rawFile;
         const fd = new FormData();
-        fd.append('audio', sourceFile);
+        fd.append('audio', rawFile);
         const res = await fetch('/api/audio/separate', { method: 'POST', body: fd });
         if (!res.ok) throw new Error(await res.text());
-        processedBlob = await res.blob();
-        showProcessedPreview(processedBlob, '人声分离完成');
-        showToast('人声提取完成', 'success');
+        separatedBlob = await res.blob();
+
+        // 显示对比预览
+        const rawUrl = URL.createObjectURL(rawFile);
+        const sepUrl = URL.createObjectURL(separatedBlob);
+        const rawPreviewEl = document.getElementById('raw-audio-preview');
+        rawPreviewEl.src = rawUrl;
+        rawPreviewEl.load();
+        const sepEl = document.getElementById('processed-audio');
+        sepEl.src = sepUrl;
+        sepEl.load();
+        document.getElementById('separate-compare').classList.remove('hidden');
+        showToast('人声提取完成，请对比后选择', 'success');
     } catch (e) {
         showToast('人声分离失败：' + e.message, 'error');
     } finally {
         btn.disabled = false;
-        btnText.textContent = '提取人声';
+        btnText.textContent = '重新提取';
         hideProcessStatus();
     }
 }
 
-function showProcessedPreview(blob, label) {
-    const audioBlob = new Blob([blob], { type: 'audio/wav' });
-    const url = URL.createObjectURL(audioBlob);
-    const audio = document.getElementById('processed-audio');
-    audio.src = '';
+// 使用人声分离结果继续裁剪
+function useSeparated() {
+    if (!separatedBlob) return;
+    processedBlob = separatedBlob;
+    loadWaveform(separatedBlob, '人声音频');
+    showToast('已切换到人声音频，请裁剪', 'success');
+}
+
+// 忽略分离结果，用原音频裁剪
+function useOriginalForTrim() {
+    processedBlob = null;
+    loadWaveform(rawFile, '原始音频');
+    showToast('已切换到原始音频，请裁剪', 'info');
+}
+
+function showProcessedPreview(blob) {
+    const url = URL.createObjectURL(new Blob([blob], { type: 'audio/wav' }));
+    const audio = document.getElementById('trim-result-audio');
     audio.src = url;
     audio.load();
     document.getElementById('processed-preview').classList.remove('hidden');

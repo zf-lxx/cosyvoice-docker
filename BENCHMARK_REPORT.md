@@ -1,8 +1,8 @@
 # CosyVoice3 Benchmark Report
 
-> 测试时间: 2026-01-18  
-> 测试环境: NVIDIA L40S (48GB VRAM)  
-> 模型: Fun-CosyVoice3-0.5B  
+> 测试时间: 2026-01-18
+> 测试环境: NVIDIA L40S (48GB VRAM)
+> 模型: Fun-CosyVoice3-0.5B
 > 测试音色: 太乙真人 (12.88秒参考音频)
 
 ---

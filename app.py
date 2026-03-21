@@ -73,23 +73,23 @@ class VoiceManager:
         self.voices_dir = voices_dir
         self.index_file = voices_dir / "voices.json"
         self.voices = self._load_index()
-    
+
     def _load_index(self) -> dict:
         if self.index_file.exists():
             return json.loads(self.index_file.read_text())
         return {}
-    
+
     def _save_index(self):
         self.index_file.write_text(json.dumps(self.voices, ensure_ascii=False, indent=2))
-    
+
     def create(self, name: str, text: str, audio_data: bytes) -> str:
         voice_id = uuid.uuid4().hex[:12]
         voice_dir = self.voices_dir / voice_id
         voice_dir.mkdir(exist_ok=True)
-        
+
         audio_path = voice_dir / "prompt.wav"
         audio_path.write_bytes(audio_data)
-        
+
         self.voices[voice_id] = {
             "id": voice_id,
             "name": name,
@@ -99,14 +99,14 @@ class VoiceManager:
         }
         self._save_index()
         return voice_id
-    
+
     def get(self, voice_id: str) -> Optional[dict]:
         return self.voices.get(voice_id)
-    
+
     def list_all(self) -> list:
-        return [{"id": v["id"], "name": v["name"], "text": v["text"], "created_at": v["created_at"]} 
+        return [{"id": v["id"], "name": v["name"], "text": v["text"], "created_at": v["created_at"]}
                 for v in self.voices.values()]
-    
+
     def delete(self, voice_id: str) -> bool:
         if voice_id not in self.voices:
             return False
@@ -127,7 +127,7 @@ class GPUManager:
         self.model_dir = None
         self.lock = threading.Lock()
         self.prompt_cache = {}  # 缓存 prompt 特征
-        
+
     def get_model(self, model_dir: str = None):
         with self.lock:
             if model_dir is None:
@@ -135,7 +135,7 @@ class GPUManager:
             if self.model is None or self.model_dir != model_dir:
                 self._load_model(model_dir)
             return self.model
-    
+
     def _load_model(self, model_dir: str):
         if self.model is not None:
             self.offload()
@@ -143,13 +143,13 @@ class GPUManager:
         self.model = AutoModel(model_dir=model_dir)
         self.model_dir = model_dir
         print(f"Model loaded successfully!")
-    
+
     def preload(self):
         """启动时预热模型和所有音色的 embedding"""
         print("Preloading model...")
         model = self.get_model()
         print("Model preloaded!")
-        
+
         # 预热所有已保存音色的 embedding
         voices = voice_manager.list_all()
         if voices:
@@ -160,16 +160,16 @@ class GPUManager:
                     try:
                         # 调用一次 frontend_zero_shot 触发缓存
                         model.frontend.frontend_zero_shot(
-                            "预热", voice["text"], voice["audio_path"], 
+                            "预热", voice["text"], voice["audio_path"],
                             24000, ""
                         )
                         print(f"  ✓ Cached: {v['name']} ({v['id']})")
                     except Exception as e:
                         print(f"  ✗ Failed: {v['name']} - {e}")
             print(f"Voice embeddings cached: {len(model.frontend.prompt_cache)}")
-        
+
         print("Model preloaded and ready!")
-    
+
     def offload(self):
         """手动卸载模型"""
         if self.model:
@@ -181,15 +181,15 @@ class GPUManager:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             print("GPU memory released")
-    
+
     def get_prompt_cache(self, voice_id: str):
         """获取缓存的 prompt 特征"""
         return self.prompt_cache.get(voice_id)
-    
+
     def set_prompt_cache(self, voice_id: str, cache_data: dict):
         """缓存 prompt 特征"""
         self.prompt_cache[voice_id] = cache_data
-    
+
     def status(self) -> dict:
         gpu_info = {"available": torch.cuda.is_available()}
         if torch.cuda.is_available():
@@ -325,23 +325,23 @@ def generate_audio_stream(model_output, sample_rate: int, cleanup_path: str = No
     is_first_chunk = True
     dc_offset = 0.0
     alpha = 0.001  # DC offset sliding average coefficient
-    
+
     try:
         for chunk in model_output:
             wav_chunk = chunk['tts_speech'].numpy().flatten()
-            
+
             # Remove DC offset using sliding average
             chunk_mean = np.mean(wav_chunk)
             dc_offset = dc_offset * (1 - alpha) + chunk_mean * alpha
             wav_chunk = wav_chunk - dc_offset
-            
+
             # Apply fade-in to first chunk
             if is_first_chunk:
                 fade_len = min(2048, len(wav_chunk))
                 fade = np.linspace(0, 1, fade_len)
                 wav_chunk[:fade_len] *= fade
                 is_first_chunk = False
-            
+
             # Convert to int16 PCM
             audio = (wav_chunk * 32767).astype(np.int16).tobytes()
             yield audio
@@ -364,16 +364,16 @@ class SpeechRequest(BaseModel):
 async def openai_speech(request: SpeechRequest):
     """OpenAI-compatible TTS API"""
     model = gpu_manager.get_model()
-    
+
     # 检查是否是自定义音色
     custom_voice = voice_manager.get(request.voice)
-    
+
     if custom_voice:
         # 使用自定义音色
         prompt_audio = custom_voice["audio_path"]
         # 添加 <|endofprompt|> 前缀修复音频重复问题 (GitHub Issue #967, #1704)
         prompt_text = f'<|endofprompt|>{custom_voice["text"]}'
-        
+
         if request.instruct:
             # instruct 模式
             if hasattr(model, 'inference_instruct2'):
@@ -402,14 +402,14 @@ async def openai_speech(request: SpeechRequest):
             )
         else:
             raise HTTPException(400, f"Voice '{request.voice}' not found. Use /v1/voices to list available voices or create custom voice via /v1/voices/create")
-    
+
     if request.response_format == "pcm":
         return StreamingResponse(
             generate_audio_stream(output, model.sample_rate),
             media_type="audio/pcm",
             headers={"X-Sample-Rate": str(model.sample_rate)}
         )
-    
+
     # 收集所有 chunks 并返回 WAV
     speeches = [chunk['tts_speech'] for chunk in output]
     full_speech = torch.cat(speeches, dim=1)
@@ -425,16 +425,16 @@ async def create_voice(
 ):
     """创建自定义音色"""
     content = await audio.read()
-    
+
     # 保存临时文件用于转写
     temp_path = INPUT_DIR / f"temp_{uuid.uuid4().hex}.wav"
     temp_path.write_bytes(content)
-    
+
     try:
         # 如果没有提供文本，使用 Fun-ASR 转写
         if not text:
             text = transcribe_audio(str(temp_path))
-        
+
         voice_id = voice_manager.create(name, text, content)
         return {
             "success": True,
@@ -529,7 +529,7 @@ async def tts(
     actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
     set_all_random_seed(actual_seed)
     print(f"Using seed: {actual_seed}")
-    
+
     # 优先使用自定义音色
     custom_voice = voice_manager.get(voice) if voice else None
     if custom_voice:
@@ -542,7 +542,7 @@ async def tts(
         temp_path.write_bytes(content)
         prompt_audio = str(temp_path)
         is_temp_file = True  # 上传的文件是临时文件
-    
+
     try:
         # 参数验证
         if mode == "zero_shot":
@@ -566,7 +566,7 @@ async def tts(
         elif mode == "sft":
             if not spk_id:
                 raise HTTPException(400, "sft mode requires spk_id (speaker ID)")
-        
+
         def run_inference(seg_text):
             if mode == "sft":
                 return model.inference_sft(seg_text, spk_id, stream=stream, speed=speed)
@@ -618,7 +618,7 @@ async def tts(
             filename=filename,
             headers={"X-Seed": str(actual_seed), "Access-Control-Expose-Headers": "X-Seed"}
         )
-    
+
     except Exception as e:
         # Cleanup on error (only if it's a temp file)
         if is_temp_file and prompt_audio and Path(prompt_audio).exists():
@@ -638,18 +638,18 @@ async def tts_async(
 ):
     task_id = uuid.uuid4().hex
     tasks[task_id] = {"status": "pending", "progress": 0}
-    
+
     prompt_path = None
     if prompt_wav:
         content = await prompt_wav.read()
         prompt_path = INPUT_DIR / f"prompt_{task_id}.wav"
         prompt_path.write_bytes(content)
-    
+
     def process():
         try:
             tasks[task_id]["status"] = "processing"
             model = gpu_manager.get_model()
-            
+
             if mode == "sft":
                 output = model.inference_sft(text, spk_id, stream=False, speed=speed)
             elif mode == "zero_shot":
@@ -661,19 +661,19 @@ async def tts_async(
                     output = model.inference_instruct2(text, instruct_text, str(prompt_path) if prompt_path else None, stream=False, speed=speed)
                 else:
                     output = model.inference_instruct(text, spk_id, instruct_text, stream=False, speed=speed)
-            
+
             speeches = [chunk['tts_speech'] for chunk in output]
             full_speech = torch.cat(speeches, dim=1)
             filename = f"tts_{task_id}.wav"
             save_audio(full_speech, model.sample_rate, filename)
-            
+
             tasks[task_id] = {"status": "completed", "progress": 100, "output_file": filename}
         except Exception as e:
             tasks[task_id] = {"status": "failed", "error": str(e)}
         finally:
             if prompt_path and prompt_path.exists():
                 prompt_path.unlink()
-    
+
     background_tasks.add_task(process)
     return {"task_id": task_id}
 
@@ -838,8 +838,8 @@ _UNUSED = '''
             --text: #1e293b; --text-muted: #64748b; --border: #e2e8f0;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            font-family: 'Inter', -apple-system, sans-serif; 
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
             background: var(--bg); color: var(--text); min-height: 100vh;
             background-image: radial-gradient(ellipse at top, rgba(99,102,241,0.1) 0%, transparent 50%),
                               radial-gradient(ellipse at bottom right, rgba(34,211,238,0.05) 0%, transparent 50%);
