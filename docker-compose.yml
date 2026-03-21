@@ -1,7 +1,7 @@
 services:
   cosyvoice:
-    image: zf-lxx/cosyvoice-docker:latest
-    container_name: cosyvoice
+    image: zhufudea/cosyvoice-docker:latest
+    container_name: cosyvoice-persion
     restart: unless-stopped
     ports:
       - "0.0.0.0:${PORT:-8188}:8188"
@@ -14,14 +14,14 @@ services:
       - MODEL_DIR=${MODEL_DIR:-pretrained_models/Fun-CosyVoice3-0.5B}
       - PORT=8188
       - GPU_IDLE_TIMEOUT=${GPU_IDLE_TIMEOUT:-600}
-      - NVIDIA_VISIBLE_DEVICES=1
+      - NVIDIA_VISIBLE_DEVICES=0
       - CUDA_VISIBLE_DEVICES=0
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["0"]
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8188/health"]
